@@ -23,20 +23,66 @@ menu_items = [
     "injection",
     "marruder",
 ]
+font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 10)
 current_index = 0  # Which item is highlighted
+serial = i2c(port=1, address=0x3C) # I2C address for the OLED display
+device = ssd1306(serial, width=128, height=32)
 
+def deauth():
+   deatuh_menu_items = [
+       "attack",
+       "back to menu"
+   ]
+   while True:
+        global current_index
+        # Check button states
+        if up_button.is_pressed:
+            current_index = (current_index - 1) % len(deatuh_menu_items)
+            time.sleep(0.05)  # Debounce: short delay so we don't double-trigger
+        elif down_button.is_pressed:
+            current_index = (current_index + 1) % len(deatuh_menu_items)
+            time.sleep(0.05)
+        elif select_button.is_pressed:
+            # Do something when the user selects the current item
+            selected_item = deatuh_menu_items[current_index]
+            if selected_item == "attack":
+                print('Attacking...')
+            elif selected_item == "back to menu":
+                main()
+            print(f"Selected: {selected_item}")
+            time.sleep(0.05)
+
+        # Draw the menu on the screen
+        with canvas(device) as draw:
+            y_offset = 0
+            for i, item in enumerate(deatuh_menu_items):
+                # If it's the selected index, draw an arrow or brackets:
+                if i == current_index:
+                    prefix = " > "  # to highlight
+                else:
+                    prefix = "  "
+
+                text = prefix + item
+                draw.text((0, y_offset), text, fill=255, font=font)
+                y_offset += 8
+        time.sleep(0.1)
+
+def injection():
+    while True:
+        with canvas(device) as draw:
+            draw.text((0,0), 'Hello Alan!', font = font, fill = 255)
+
+def marruder():
+    while True:
+        with canvas(device) as draw:
+            draw.text((0,0), 'Hello Alan!', font = font, fill = 255)
 
 
 def main():
-    # Set up I2C interface for the display
-    serial = i2c(port=1, address=0x3C)
-    # Adjust width=128, height=64 if your display is 128×64
-    device = ssd1306(serial, width=128, height=32)
 
     # Optionally, load a TTF font. For the built-in font, just use None.
     # Increase the size if you have a bigger display or want bigger text.
-    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 16)
-    #font = None
+    
 
     global current_index
 
@@ -57,6 +103,13 @@ def main():
         elif select_button.is_pressed:
             # Do something when the user selects the current item
             selected_item = menu_items[current_index]
+            if selected_item == "deauth":
+                deauth()
+            elif selected_item == "injection":
+                injection()
+            elif selected_item == "marruder":
+                marruder()
+            # For now, just print the selected item to the console
             print(f"Selected: {selected_item}")
             # We'll just sleep a bit so we don't spam output
             time.sleep(0.05)
@@ -71,7 +124,7 @@ def main():
             for i, item in enumerate(menu_items):
                 # If it's the selected index, draw an arrow or brackets:
                 if i == current_index:
-                    prefix = "*"  # to highlight
+                    prefix = " > "  # to highlight
                 else:
                     prefix = "  "
 
