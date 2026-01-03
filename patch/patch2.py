@@ -9,7 +9,7 @@ PATCH_SUBDIR = "patches/bcm43430a1/7_45_41_46/nexmon"
 LINKS = [
     ("/usr/lib/arm-linux-gnueabihf/libisl.so.23.2.0",
      "/usr/lib/arm-linux-gnueabihf/libisl.so.10"),
-    ("/usr/lib/arm-linux-gnueabihf/libmpfr.so.6.4.0",
+    ("/usr/lib/arm-linux-gnueabihf/libmpfr.so.6.2.0",
      "/usr/lib/arm-linux-gnueabihf/libmpfr.so.4")
 ]
 
