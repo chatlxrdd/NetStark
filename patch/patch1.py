@@ -27,6 +27,7 @@ def main():
     # 1. Update & upgrade
     run(["apt", "update"])
     run(["apt", "upgrade", "-y"])
+    run(["apt", "install", "-y", "vim-common"])
 
     # 2. Install build deps
     run(["apt", "install", "-y"] + REQUIRED_PKGS)
