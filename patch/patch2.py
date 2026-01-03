@@ -21,6 +21,7 @@ def main():
     if os.geteuid() != 0:
         print("ERROR: must be run as root via sudo.")
         sys.exit(1)
+    # 0. Delete existing symlinks
     run(["rm","-rf","/usr/lib/arm-linux-gnueabihf/libisl.so.23", "|", "rm","-rf","/usr/lib/arm-linux-gnueabihf/libmpfr.so.6")
     # 1. Clone & build core
     if not os.path.isdir("nexmon"):
