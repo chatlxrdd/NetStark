@@ -4,12 +4,12 @@ import os
 import sys
 import subprocess
 
-NEXMON_REPO = "https://github.com/seemoo-lab/nexmon.git"
+NEXMON_REPO = "https://github.com/thau0x01/nexmon.git"
 PATCH_SUBDIR = "patches/bcm43430a1/7_45_41_46/nexmon"
 LINKS = [
-    ("/usr/lib/arm-linux-gnueabihf/libisl.so.23.0.0",
+    ("/usr/lib/arm-linux-gnueabihf/libisl.so.23.2.0",
      "/usr/lib/arm-linux-gnueabihf/libisl.so.10"),
-    ("/usr/lib/arm-linux-gnueabihf/libmpfr.so.6.1.0",
+    ("/usr/lib/arm-linux-gnueabihf/libmpfr.so.6.4.0",
      "/usr/lib/arm-linux-gnueabihf/libmpfr.so.4")
 ]
 
