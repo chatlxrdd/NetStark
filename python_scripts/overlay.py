@@ -8,9 +8,9 @@ from PIL import ImageFont
 from gpiozero import Button
 
 # GPIO pin assignments (physical pins: 11 -> GPIO17, 13 -> GPIO27, 15 -> GPIO22)
-UP_PIN = 27
-DOWN_PIN = 17
-SELECT_PIN = 22
+UP_PIN = 29
+DOWN_PIN = 31
+SELECT_PIN = 33
 
 # Initialize buttons with internal pull-ups
 up_button = Button(UP_PIN, pull_up=True)
