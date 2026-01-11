@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import json
 
 def is_root():
     return os.geteuid() == 0
@@ -77,15 +78,9 @@ def scan_networks(interface):
         print(f"Scannin Error: {e}")
         return []
 
-def save_scan_results(results, filename):
+def save_scan_results_as_json(results, filename):
     with open(filename, 'w') as f:
-        for network in results:
-            f.write(f"BSSID: {network.get('bssid', '')}\n")
-            f.write(f"SSID: {network.get('ssid', '')}\n")
-            f.write(f"Signal: {network.get('signal', '')}\n")
-            f.write(f"Frequency: {network.get('frequency', '')}\n")
-            f.write(f"Channel: {network.get('channel', '')}\n")
-            f.write("\n")
+        json.dump(results, f, indent=4)
 
 def disable_monitor_mode(interface):
     return change_interface_mode(interface, 'managed')
