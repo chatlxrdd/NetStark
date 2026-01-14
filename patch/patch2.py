@@ -22,12 +22,16 @@ def main():
         print("ERROR: must be run as root via sudo.")
         sys.exit(1)
     # 0. Delete existing symlinks
-    run(["rm","-rf","/usr/lib/arm-linux-gnueabihf/libisl.so.23", "|", "rm","-rf","/usr/lib/arm-linux-gnueabihf/libmpfr.so.6")
+    run(["rm","-rf","/usr/lib/arm-linux-gnueabihf/libisl.so.23", "|", "rm","-rf","/usr/lib/arm-linux-gnueabihf/libmpfr.so.6"])
     # 1. Clone & build core
     if not os.path.isdir("nexmon"):
         run(["git", "clone", NEXMON_REPO])
     os.chdir("nexmon")
-    run(["bash", "-c", "source setup_env.sh && make"])
+    try:
+        run(["bash", "-c", "source setup_env.sh && make"])
+    except subprocess.CalledProcessError:
+        print("ERROR: Failed to build Nexmon core.")
+        pass # Proceed to attempt patching anyway added because 'make' wants to build patch for a different chip than found in raspberry pi
 
     # 2. Apply patch
     os.chdir(PATCH_SUBDIR)
