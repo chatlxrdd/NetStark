@@ -38,19 +38,11 @@ def main():
         "gpiozero",
         "scapy"
     ]
-    git_repo_drivers = [
-        'https://github.com/waveshare/e-Paper.git'
-    ]
-    
     for package in necessary_packages:
         install_pack(package)
 
     for pip_package in nessesary_pip_packages:
         install_pip_package(pip_package)
-
-    for git_repo in git_repo_drivers:
-        install_display_drivers(git_repo)
-
     cleanup_drivers()
 if __name__ == "__main__":
     main()

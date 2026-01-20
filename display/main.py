@@ -10,7 +10,8 @@ import random
 import string
 from scripts.pentests import scan_wifi, deauth, probe_request_flood, beacon_flood
 
-picdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'pic')
+# picdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'pic')
+fontsdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'fonts')
 libdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'lib')
 if os.path.exists(libdir):
     sys.path.append(libdir)
@@ -68,7 +69,7 @@ def draw_menu_image(index):
     image = Image.new('1', (epd.height, epd.width), 255)
     draw = ImageDraw.Draw(image)
 
-    font_title = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 20)
+    font_title = ImageFont.truetype(os.path.join(fontsdir, 'Font.ttc'), 20)
     draw.text((10, 5), "Menu", font=font_title, fill=0)
 
     y = 35
@@ -90,10 +91,10 @@ def main():
     global epd, font_item, current_index, screen_state
     try:
         epd = epd2in13_V4.EPD()
-        font_item = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 14)
+        font_item = ImageFont.truetype(os.path.join(fontsdir, 'Font.ttc'), 14)
 
         # SPLASH na start
-        show_splash()
+        # show_splash()
         
         # Przejdź do menu
         screen_state = "menu"
@@ -248,13 +249,17 @@ def main():
                             logging.info("CSV cursor: %d start: %d", cursor, start_idx)
 
                         def csv_on_select():
-                            # przywroc handlery menu i wyswietl menu
+                            # przywróć poprzednie handlery (powrót do menu)
                             btn_up.when_pressed = old_up
                             btn_down.when_pressed = old_down
                             btn_select.when_pressed = old_select
-                            image = draw_menu_image(current_index)
-                            epd.display(epd.getbuffer(image))
-                            logging.info("Powrot do menu")
+                            # narysuj menu ponownie
+                            try:
+                                image = draw_menu_image(current_index)
+                                epd.display(epd.getbuffer(image))
+                                logging.info("Returned to menu from CSV view")
+                            except Exception:
+                                logging.exception("Error while returning to menu")
 
                         # ustaw nowe handlery
                         btn_up.when_pressed = csv_on_up
@@ -264,7 +269,7 @@ def main():
                         # pokaż pierwszy widok
                         draw_csv_view()
                         logging.info("Wyswietlono zawartosc CSV: %s", latest_csv)
-                        # pozwól użytkownikowi nawigować przyciskami - wyświetlenie trwa dopóki przycisk SELECT nie przywróci menu
+                        
             if menu_item == "Deauth":
                 # Tutaj dodaj kod deautoryzacji
                 pass
