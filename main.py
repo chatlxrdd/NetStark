@@ -50,7 +50,7 @@ def show_splash():
     
     # Twoja bitmapa (dostosuj nazwę)
     splash_image = Image.open(os.path.join(picdir, '2in13.bmp'))  # lub swoją
-    epd.display(epd.getbuffer(splash_image))
+    epd.displayPartialPartial(epd.getbuffer(splash_image))
     time.sleep(3)  # 3s splash
 
     #testowe wylaczyc 
@@ -110,19 +110,24 @@ def main():
         def on_up():
             current_index = (current_index - 1) % len(menu_items)
             image = draw_menu_image(current_index)
-            epd.displayPartial(epd.getbuffer(image))
+            epd.displayPartialPartial(epd.getbuffer(image))
             logging.info("Menu: %s", menu_items[current_index])
 
         def on_down():
             current_index = (current_index + 1) % len(menu_items)
             image = draw_menu_image(current_index)
-            epd.displayPartial(epd.getbuffer(image))
+            epd.displayPartialPartial(epd.getbuffer(image))
             logging.info("Menu: %s", menu_items[current_index])
 
         def on_select(menu_item):
             menu_item = menu_items[current_index]
             logging.info("Selected: %s", menu_item)
             if menu_item == "Scan WiFi":
+                image = Image.new('1', (epd.height, epd.width), 255)
+                draw = ImageDraw.Draw(image)
+                draw.text((10, 10), "Skanowanie WiFi...", font=font_item, fill=0)
+                epd.displayPartialPartial(epd.getbuffer(image))
+                logging.info("Starting WiFi scan...")
                 scan_wifi("wlan0mon")
                 # plik CSV znajduje sie w katalogu "data" obok skryptu
                 csv_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data')
@@ -132,7 +137,7 @@ def main():
                     image = Image.new('1', (epd.height, epd.width), 255)
                     draw = ImageDraw.Draw(image)
                     draw.text((10, 10), "Brak plikow .csv w data", font=font_item, fill=0)
-                    epd.display(epd.getbuffer(image))
+                    epd.displayPartialPartialPartial(epd.getbuffer(image))
                     time.sleep(2)
                 else:
                     latest_csv = max(csv_files, key=os.path.getmtime)
@@ -150,7 +155,7 @@ def main():
                         image = Image.new('1', (epd.height, epd.width), 255)
                         draw = ImageDraw.Draw(image)
                         draw.text((10, 10), "Blad odczytu CSV", font=font_item, fill=0)
-                        epd.display(epd.getbuffer(image))
+                        epd.displayPartialPartial(epd.getbuffer(image))
                         time.sleep(2)
                     else:
                         # przygotuj widok listy z nawigacja przyciskami
@@ -220,7 +225,7 @@ def main():
                             info_w = draw.textsize(bottom_info, font=font_item)[0]
                             info_x = (epd.height - info_w) // 2
                             draw.text((info_x, epd.width - 16), bottom_info, font=font_item, fill=0)
-                            epd.display(epd.getbuffer(image))
+                            epd.displayPartialPartial(epd.getbuffer(image))
 
                         # zapamietaj stare handlery by przywrocic menu
                         old_up = btn_up.when_pressed
@@ -256,7 +261,7 @@ def main():
                             # narysuj menu ponownie
                             try:
                                 image = draw_menu_image(current_index)
-                                epd.display(epd.getbuffer(image))
+                                epd.displayPartialPartial(epd.getbuffer(image))
                                 logging.info("Returned to menu from CSV view")
                             except Exception:
                                 logging.exception("Error while returning to menu")
