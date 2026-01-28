@@ -26,6 +26,8 @@ if os.path.exists(LIB_DIR):
     sys.path.append(LIB_DIR)
 
 from lib.waveshare_epd import epd2in13_V4
+from scapy.all import Dot11, Dot11Beacon, Dot11Elt, RadioTap, sendp
+import random
 
 logging.basicConfig(level=logging.INFO, filename='/var/log/epaper.log')
 
@@ -451,12 +453,60 @@ def main():
             return
 
         if item == "Beacon Flood":
-            draw_text_screen(["Beacon flood..."], full=True)
-            beacon_flood("", "wlan0mon")
-            draw_text_screen(["Done"], full=True)
-            time.sleep(1)
-            render_menu(full=True)
-            return
+            draw_text_screen(["Beacon flood...", "SELECT: stop"], full=True)
+            output = []
+            proc = subprocess.Popen(
+                ['sudo', 'mdk4', 'wlan0mon', 'b', '-a'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+            
+            def reader():
+                for line in proc.stdout:
+                    output.append(line.strip())
+            threading.Thread(target=reader, daemon=True).start()
+            
+            old_select = btn_select.when_pressed
+            
+            def draw_beacon_output(full=False):
+                image = Image.new('1', (epd.height, epd.width), 255)
+                draw = ImageDraw.Draw(image)
+                draw.text((10, 5), "Beacon flood", font=font_small, fill=0)
+                y = 20
+                for line in output[-6:]:
+                    draw.text((10, y), line[:40], font=font_small, fill=0)
+                    y += 12
+                draw.text((10, epd.width - 16), "SELECT: stop", font=font_small, fill=0)
+                
+                if full:
+                    display_full(image)
+                else:
+                    display_partial(image)
+            
+            def stop_beacon():
+                proc.terminate()
+                try:
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
+                btn_select.when_pressed = old_select
+                draw_text_screen(["Done"], full=True)
+                time.sleep(1)
+                render_menu(full=True)
+            
+            btn_select.when_pressed = stop_beacon
+            
+            draw_beacon_output(full=True)
+            
+            def refresher():
+                while proc.poll() is None:
+                    draw_beacon_output(full=False)
+                    time.sleep(0.25)
+            
+            threading.Thread(target=refresher, daemon=True).start()
+            proc.wait()
 
         if item == "Power Off":
             power_off()
