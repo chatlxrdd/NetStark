@@ -95,12 +95,14 @@ def main():
         btn_down   = Button(BTN_DOWN_PIN,   pull_up=True, bounce_time=0.2)
 
         def on_up():
+            global current_index
             current_index = (current_index - 1) % len(menu_items)
             image = draw_menu_image(current_index)
             epd.displayPartialPartial(epd.getbuffer(image))
             logging.info("Menu: %s", menu_items[current_index])
 
         def on_down():
+            global current_index
             current_index = (current_index + 1) % len(menu_items)
             image = draw_menu_image(current_index)
             epd.displayPartialPartial(epd.getbuffer(image))
