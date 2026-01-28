@@ -15,7 +15,6 @@ fontsdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file_
 libdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'lib')
 if os.path.exists(libdir):
     sys.path.append(libdir)
-
 from waveshare_epd import epd2in13_V4
 from PIL import Image, ImageDraw, ImageFont
 from gpiozero import Button
@@ -92,6 +91,7 @@ def main():
     try:
         epd = epd2in13_V4.EPD()
         font_item = ImageFont.truetype(os.path.join(fontsdir, 'Font.ttc'), 14)
+        epd.init()
 
         # SPLASH na start
         # show_splash()
@@ -276,17 +276,186 @@ def main():
                         logging.info("Wyswietlono zawartosc CSV: %s", latest_csv)
                         
             if menu_item == "Deauth":
-                # Tutaj dodaj kod deautoryzacji
-                pass
-            if menu_item == "Injection":
-                # Tutaj dodaj kod injection
+                image = Image.new('1', (epd.height, epd.width), 255)
+                draw = ImageDraw.Draw(image)
+                draw.text((10, 10), "Wczytywanie sieci...", font=font_item, fill=0)
+                epd.displayPartialPartial(epd.getbuffer(image))
+                
+                csv_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data')
+                csv_files = glob.glob(os.path.join(csv_dir, '*.csv'))
+                
+                if not csv_files:
+                    image = Image.new('1', (epd.height, epd.width), 255)
+                    draw = ImageDraw.Draw(image)
+                    draw.text((10, 10), "Brak plikow .csv w data", font=font_item, fill=0)
+                    epd.displayPartialPartial(epd.getbuffer(image))
+                    time.sleep(2)
+                else:
+                    latest_csv = max(csv_files, key=os.path.getmtime)
+                    rows = []
+                    try:
+                        with open(latest_csv, newline='', encoding='utf-8') as f:
+                            reader = csv.reader(f)
+                            next(reader, None)
+                            for r in reader:
+                                rows.append(r)
+                    except Exception as e:
+                        logging.exception("Blad podczas czytania CSV")
+                        time.sleep(2)
+                        return
+                    
+                    if not rows:
+                        image = Image.new('1', (epd.height, epd.width), 255)
+                        draw = ImageDraw.Draw(image)
+                        draw.text((10, 10), "Brak sieci WiFi", font=font_item, fill=0)
+                        epd.displayPartialPartial(epd.getbuffer(image))
+                        time.sleep(2)
+                        return
+                    
+                    old_up = btn_up.when_pressed
+                    old_down = btn_down.when_pressed
+                    old_select = btn_select.when_pressed
+                    
+                    wifi_cursor = 0
+                    deauth_options = ["Single Network", "Deauth All"] + [rows[i][0] if rows[i] else "?" for i in range(len(rows))]
+                    
+                    def draw_deauth_menu():
+                        image = Image.new('1', (epd.height, epd.width), 255)
+                        draw = ImageDraw.Draw(image)
+                        draw.text((10, 5), "Deauth mode:", font=font_item, fill=0)
+                        y = 25
+                        for i in range(min(5, 2)):
+                            prefix = "> " if i == wifi_cursor else "  "
+                            draw.text((10, y), prefix + deauth_options[i], font=font_item, fill=0)
+                            y += 18
+                        epd.displayPartialPartial(epd.getbuffer(image))
+                    
+                    def deauth_menu_up():
+                        nonlocal wifi_cursor
+                        wifi_cursor = (wifi_cursor - 1) % 2
+                        draw_deauth_menu()
+                    
+                    def deauth_menu_down():
+                        nonlocal wifi_cursor
+                        wifi_cursor = (wifi_cursor + 1) % 2
+                        draw_deauth_menu()
+                    
+                    def deauth_menu_select():
+                        nonlocal wifi_cursor
+                        if wifi_cursor == 0:
+                            show_wifi_list()
+                        else:
+                            deauth_all_networks()
+                    
+                    def show_wifi_list():
+                        nonlocal wifi_cursor
+                        wifi_cursor = 0
+                        
+                        def draw_wifi_list():
+                            image = Image.new('1', (epd.height, epd.width), 255)
+                            draw = ImageDraw.Draw(image)
+                            draw.text((10, 5), "Wybierz siec:", font=font_item, fill=0)
+                            y = 25
+                            for i in range(min(5, len(rows))):
+                                prefix = "> " if i == wifi_cursor else "  "
+                                ssid = rows[i][0] if rows[i] else "?"
+                                draw.text((10, y), prefix + ssid[:20], font=font_item, fill=0)
+                                y += 18
+                            epd.displayPartialPartial(epd.getbuffer(image))
+                        
+                        def wifi_up():
+                            nonlocal wifi_cursor
+                            wifi_cursor = (wifi_cursor - 1) % len(rows)
+                            draw_wifi_list()
+                        
+                        def wifi_down():
+                            nonlocal wifi_cursor
+                            wifi_cursor = (wifi_cursor + 1) % len(rows)
+                            draw_wifi_list()
+                        
+                        def wifi_select():
+                            selected_network = rows[wifi_cursor][0]
+                            bssid = rows[wifi_cursor][1] if len(rows[wifi_cursor]) > 1 else ""
+                            logging.info("Wybrana siec: %s (%s)", selected_network, bssid)
+                            
+                            image = Image.new('1', (epd.height, epd.width), 255)
+                            draw = ImageDraw.Draw(image)
+                            draw.text((10, 10), "Deauth: " + selected_network[:15], font=font_item, fill=0)
+                            epd.displayPartialPartial(epd.getbuffer(image))
+                            
+                            if bssid:
+                                deauth(bssid, "wlan0mon")
+                            
+                            time.sleep(2)
+                            return_to_menu()
+                        
+                        btn_up.when_pressed = wifi_up
+                        btn_down.when_pressed = wifi_down
+                        btn_select.when_pressed = wifi_select
+                        draw_wifi_list()
+                    
+                    def deauth_all_networks():
+                        image = Image.new('1', (epd.height, epd.width), 255)
+                        draw = ImageDraw.Draw(image)
+                        draw.text((10, 10), "Deauth All...", font=font_item, fill=0)
+                        epd.displayPartialPartial(epd.getbuffer(image))
+                        
+                        for row in rows:
+                            bssid = row[1] if len(row) > 1 else ""
+                            if bssid:
+                                logging.info("Deauth all: %s", bssid)
+                                deauth(bssid, "wlan0mon")
+                        
+                        time.sleep(2)
+                        return_to_menu()
+                    
+                    def return_to_menu():
+                        btn_up.when_pressed = old_up
+                        btn_down.when_pressed = old_down
+                        btn_select.when_pressed = old_select
+                        image = draw_menu_image(current_index)
+                        epd.displayPartialPartial(epd.getbuffer(image))
+                    
+                    btn_up.when_pressed = deauth_menu_up
+                    btn_down.when_pressed = deauth_menu_down
+                    btn_select.when_pressed = deauth_menu_select
+                    
+                    draw_deauth_menu()
                 pass
             if menu_item == "Probe Request Flood":
-                # Tutaj dodaj kod Probe Request Flood
-                pass
+                image = Image.new('1', (epd.height, epd.width), 255)
+                draw = ImageDraw.Draw(image)
+                draw.text((10, 10), "Probe Request Flood...", font=font_item, fill=0)
+                epd.displayPartialPartial(epd.getbuffer(image))
+                logging.info("Starting Probe Request Flood...")
+                
+                probe_request_flood("wlan0mon")
+                
+                image = Image.new('1', (epd.height, epd.width), 255)
+                draw = ImageDraw.Draw(image)
+                draw.text((10, 10), "Flood zakonczony", font=font_item, fill=0)
+                epd.displayPartialPartial(epd.getbuffer(image))
+                time.sleep(2)
+                
+                image = draw_menu_image(current_index)
+                epd.displayPartialPartial(epd.getbuffer(image))
             if menu_item == "Beacon Flood":
-                # Tutaj dodaj kod Beacon Flood
-                pass    
+                image = Image.new('1', (epd.height, epd.width), 255)
+                draw = ImageDraw.Draw(image)
+                draw.text((10, 10), "Beacon Flood...", font=font_item, fill=0)
+                epd.displayPartialPartial(epd.getbuffer(image))
+                logging.info("Starting Beacon Flood...")
+                
+                beacon_flood("wlan0mon")
+                
+                image = Image.new('1', (epd.height, epd.width), 255)
+                draw = ImageDraw.Draw(image)
+                draw.text((10, 10), "Flood zakonczony", font=font_item, fill=0)
+                epd.displayPartialPartial(epd.getbuffer(image))
+                time.sleep(2)
+                
+                image = draw_menu_image(current_index)
+                epd.displayPartialPartial(epd.getbuffer(image))
             if menu_item == "Power Off":
                 power_off()
             

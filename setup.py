@@ -43,6 +43,7 @@ def main():
 
     for pip_package in nessesary_pip_packages:
         install_pip_package(pip_package)
+    
     cleanup_drivers()
 if __name__ == "__main__":
     main()
