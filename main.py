@@ -242,7 +242,7 @@ def main():
                                 start_idx = cursor - lines_per_page + 1
                             draw_csv_view()
                             logging.info("CSV cursor: %d start: %d", cursor, start_idx)
-
+#
                         def csv_on_select():
                             # przywróć poprzednie handlery (powrót do menu)
                             btn_up.when_pressed = old_up
