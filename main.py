@@ -14,10 +14,9 @@ import re
 from PIL import Image, ImageDraw, ImageFont
 from gpiozero import Button
 
-# Your pentest actions (must exist)
+# Your pentest actions
 from scripts.pentests import scan_wifi, deauth, probe_request_flood, beacon_flood
 
-# Paths
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
 FONT_PATH = os.path.join(BASE_DIR, "fonts", "Font.ttc")
 LIB_DIR = os.path.join(BASE_DIR, "lib")
@@ -43,11 +42,14 @@ menu_items = [
     "Power Off",
 ]
 
-# globals for menu
 current_index = 0
 epd = None
 font_menu = None
 font_small = None
+
+btn_up = None
+btn_down = None
+btn_select = None
 
 
 def load_airodump_aps(csv_path):
@@ -91,19 +93,14 @@ def load_airodump_aps(csv_path):
     return aps
 
 
-def draw_text_screen(lines, partial=True):
-    """Simple multiline text screen."""
-    image = Image.new('1', (epd.height, epd.width), 255)
-    draw = ImageDraw.Draw(image)
-    y = 5
-    for line in lines:
-        draw.text((10, y), line, font=font_small, fill=0)
-        y += 14
+# Display update helpers
 
-    if partial:
-        epd.displayPartial(epd.getbuffer(image))
-    else:
-        epd.display(epd.getbuffer(image))
+def display_full(image):
+    epd.display(epd.getbuffer(image))
+
+
+def display_partial(image):
+    epd.displayPartial(epd.getbuffer(image))
 
 
 def draw_menu_image(index):
@@ -121,6 +118,20 @@ def draw_menu_image(index):
     return image
 
 
+def draw_text_screen(lines, full=True):
+    image = Image.new('1', (epd.height, epd.width), 255)
+    draw = ImageDraw.Draw(image)
+    y = 5
+    for line in lines:
+        draw.text((10, y), line, font=font_small, fill=0)
+        y += 14
+
+    if full:
+        display_full(image)
+    else:
+        display_partial(image)
+
+
 def clear_screen():
     epd.init()
     epd.Clear(0xFF)
@@ -128,21 +139,51 @@ def clear_screen():
 
 
 def power_off():
-    draw_text_screen(["Power off..."], partial=False)
+    draw_text_screen(["Power off..."], full=True)
     time.sleep(1)
     clear_screen()
     subprocess.run(['sudo', 'poweroff'])
 
 
-def ap_list_view(aps, title, on_exit):
-    """AP list viewer: UP/DOWN scroll, SELECT back."""
+def render_menu(full=False):
+    image = draw_menu_image(current_index)
+    if full:
+        display_full(image)
+    else:
+        display_partial(image)
+
+
+def scan_wifi_view():
+    draw_text_screen(["Scanning WiFi...", "wait 30s"], full=True)
+
+    # Note: scan_wifi must write to data/scans/*.csv
+    scan_wifi("wlan0mon")
+
+    os.makedirs(DATA_SCANS, exist_ok=True)
+    csv_files = glob.glob(os.path.join(DATA_SCANS, "*.csv"))
+    if not csv_files:
+        draw_text_screen(["No CSV in", "data/scans"], full=True)
+        time.sleep(2)
+        render_menu(full=True)
+        return
+
+    latest_csv = max(csv_files, key=os.path.getmtime)
+    aps = load_airodump_aps(latest_csv)
+    if not aps:
+        draw_text_screen(["No AP in CSV"], full=True)
+        time.sleep(2)
+        render_menu(full=True)
+        return
+
+    old_up, old_down, old_select = btn_up.when_pressed, btn_down.when_pressed, btn_select.when_pressed
+
     state = {"cursor": 0, "start": 0}
     PER_PAGE = 5
 
-    def draw():
+    def draw(full=False):
         image = Image.new('1', (epd.height, epd.width), 255)
         draw = ImageDraw.Draw(image)
-        draw.text((10, 5), title, font=font_small, fill=0)
+        draw.text((10, 5), "AP list", font=font_small, fill=0)
 
         start = state["start"]
         end = min(start + PER_PAGE, len(aps))
@@ -159,41 +200,53 @@ def ap_list_view(aps, title, on_exit):
             y += 18
 
         draw.text((10, epd.width - 16), "SELECT: back", font=font_small, fill=0)
-        epd.displayPartial(epd.getbuffer(image))
+
+        if full:
+            display_full(image)
+        else:
+            display_partial(image)
 
     def up():
         if state["cursor"] > 0:
             state["cursor"] -= 1
         if state["cursor"] < state["start"]:
             state["start"] = state["cursor"]
-        draw()
+        draw(full=False)
 
     def down():
         if state["cursor"] < len(aps) - 1:
             state["cursor"] += 1
         if state["cursor"] >= state["start"] + PER_PAGE:
             state["start"] = state["cursor"] - PER_PAGE + 1
-        draw()
+        draw(full=False)
+
+    def back_to_menu():
+        btn_up.when_pressed, btn_down.when_pressed, btn_select.when_pressed = old_up, old_down, old_select
+        render_menu(full=True)
 
     btn_up.when_pressed = up
     btn_down.when_pressed = down
-    btn_select.when_pressed = on_exit
-    draw()
+    btn_select.when_pressed = back_to_menu
+
+    # full refresh on entering new screen
+    draw(full=True)
 
 
-def deauth_flow():
+def deauth_view():
     os.makedirs(DATA_SCANS, exist_ok=True)
     csv_files = glob.glob(os.path.join(DATA_SCANS, "*.csv"))
     if not csv_files:
-        draw_text_screen(["No scans in", "data/scans"], partial=True)
+        draw_text_screen(["No scans in", "data/scans"], full=True)
         time.sleep(2)
+        render_menu(full=True)
         return
 
     latest_csv = max(csv_files, key=os.path.getmtime)
     aps = load_airodump_aps(latest_csv)
     if not aps:
-        draw_text_screen(["No AP in CSV"], partial=True)
+        draw_text_screen(["No AP in CSV"], full=True)
         time.sleep(2)
+        render_menu(full=True)
         return
 
     old_up, old_down, old_select = btn_up.when_pressed, btn_down.when_pressed, btn_select.when_pressed
@@ -204,9 +257,9 @@ def deauth_flow():
 
     def restore_menu():
         btn_up.when_pressed, btn_down.when_pressed, btn_select.when_pressed = old_up, old_down, old_select
-        epd.displayPartial(epd.getbuffer(draw_menu_image(current_index)))
+        render_menu(full=True)
 
-    def draw_mode():
+    def draw_mode(full=False):
         image = Image.new('1', (epd.height, epd.width), 255)
         draw = ImageDraw.Draw(image)
         draw.text((10, 5), "Deauth:", font=font_small, fill=0)
@@ -216,9 +269,13 @@ def deauth_flow():
             prefix = "> " if i == state["cursor"] else "  "
             draw.text((10, y), prefix + txt, font=font_small, fill=0)
             y += 18
-        epd.displayPartial(epd.getbuffer(image))
 
-    def draw_ap_list():
+        if full:
+            display_full(image)
+        else:
+            display_partial(image)
+
+    def draw_ap_list(full=False):
         image = Image.new('1', (epd.height, epd.width), 255)
         draw = ImageDraw.Draw(image)
         draw.text((10, 5), "Pick AP:", font=font_small, fill=0)
@@ -238,9 +295,13 @@ def deauth_flow():
             y += 18
 
         draw.text((10, epd.width - 16), "SEL: start", font=font_small, fill=0)
-        epd.displayPartial(epd.getbuffer(image))
 
-    def draw_output():
+        if full:
+            display_full(image)
+        else:
+            display_partial(image)
+
+    def draw_output(full=False):
         image = Image.new('1', (epd.height, epd.width), 255)
         draw = ImageDraw.Draw(image)
         draw.text((10, 5), "Deauth running", font=font_small, fill=0)
@@ -249,7 +310,11 @@ def deauth_flow():
             draw.text((10, y), line[:40], font=font_small, fill=0)
             y += 12
         draw.text((10, epd.width - 16), "SELECT: stop", font=font_small, fill=0)
-        epd.displayPartial(epd.getbuffer(image))
+
+        if full:
+            display_full(image)
+        else:
+            display_partial(image)
 
     def stop_deauth():
         p = proc["p"]
@@ -282,36 +347,39 @@ def deauth_flow():
         btn_down.when_pressed = None
         btn_select.when_pressed = stop_deauth
 
-        # periodic refresh of output
+        # Full refresh on screen switch
+        draw_output(full=True)
+
+        # Periodic refresh so it doesn't look frozen
         def refresher():
             while state["screen"] == "output" and proc["p"] is not None:
-                draw_output()
-                time.sleep(0.3)
+                draw_output(full=False)
+                time.sleep(0.25)
+
         threading.Thread(target=refresher, daemon=True).start()
-        draw_output()
 
     def up():
         if state["screen"] == "mode":
             state["cursor"] = (state["cursor"] - 1) % 3
-            draw_mode()
+            draw_mode(full=False)
         elif state["screen"] == "list":
             if state["cursor"] > 0:
                 state["cursor"] -= 1
             if state["cursor"] < state["start"]:
                 state["start"] = state["cursor"]
-            draw_ap_list()
+            draw_ap_list(full=False)
 
     def down():
         if state["screen"] == "mode":
             state["cursor"] = (state["cursor"] + 1) % 3
-            draw_mode()
+            draw_mode(full=False)
         elif state["screen"] == "list":
             if state["cursor"] < len(aps) - 1:
                 state["cursor"] += 1
             PER_PAGE = 5
             if state["cursor"] >= state["start"] + PER_PAGE:
                 state["start"] = state["cursor"] - PER_PAGE + 1
-            draw_ap_list()
+            draw_ap_list(full=False)
 
     def select():
         if state["screen"] == "mode":
@@ -319,11 +387,12 @@ def deauth_flow():
                 state["screen"] = "list"
                 state["cursor"] = 0
                 state["start"] = 0
-                draw_ap_list()
+                draw_ap_list(full=True)
             elif state["cursor"] == 1:
                 start_deauth(["mdk4", "wlan0mon", "d"])
             else:
                 restore_menu()
+
         elif state["screen"] == "list":
             ap = aps[state["cursor"]]
             start_deauth(["mdk4", "wlan0mon", "d", "-b", ap["bssid"]])
@@ -332,7 +401,8 @@ def deauth_flow():
     btn_down.when_pressed = down
     btn_select.when_pressed = select
 
-    draw_mode()
+    # Full refresh on entering mode menu
+    draw_mode(full=True)
 
 
 def main():
@@ -350,70 +420,42 @@ def main():
     btn_up     = Button(BTN_UP_PIN,     pull_up=True, bounce_time=0.2)
     btn_down   = Button(BTN_DOWN_PIN,   pull_up=True, bounce_time=0.2)
 
-    def render_menu():
-        image = draw_menu_image(current_index)
-        epd.displayPartial(epd.getbuffer(image))
-
     def on_up():
         global current_index
         current_index = (current_index - 1) % len(menu_items)
-        render_menu()
+        render_menu(full=False)
 
     def on_down():
         global current_index
         current_index = (current_index + 1) % len(menu_items)
-        render_menu()
+        render_menu(full=False)
 
     def on_select():
         item = menu_items[current_index]
         logging.info("Selected: %s", item)
 
         if item == "Scan WiFi":
-            draw_text_screen(["Scanning WiFi...", "wait 30s"], partial=False)
-            scan_wifi("wlan0mon")
-
-            csv_files = glob.glob(os.path.join(DATA_SCANS, "*.csv"))
-            if not csv_files:
-                draw_text_screen(["No CSV in", "data/scans"], partial=True)
-                time.sleep(2)
-                render_menu()
-                return
-
-            latest_csv = max(csv_files, key=os.path.getmtime)
-            aps = load_airodump_aps(latest_csv)
-            if not aps:
-                draw_text_screen(["No AP in CSV"], partial=True)
-                time.sleep(2)
-                render_menu()
-                return
-
-            old_up, old_down, old_select = btn_up.when_pressed, btn_down.when_pressed, btn_select.when_pressed
-
-            def back_to_menu():
-                btn_up.when_pressed, btn_down.when_pressed, btn_select.when_pressed = old_up, old_down, old_select
-                render_menu()
-
-            ap_list_view(aps, "AP list", back_to_menu)
+            scan_wifi_view()
             return
 
         if item == "Deauth":
-            deauth_flow()
+            deauth_view()
             return
 
         if item == "Probe Request Flood":
-            draw_text_screen(["Probe flood...", "(running)"], partial=False)
+            draw_text_screen(["Probe flood..."], full=True)
             probe_request_flood("", "wlan0mon")
-            draw_text_screen(["Done", "SELECT back"], partial=True)
+            draw_text_screen(["Done"], full=True)
             time.sleep(1)
-            render_menu()
+            render_menu(full=True)
             return
 
         if item == "Beacon Flood":
-            draw_text_screen(["Beacon flood...", "(running)"], partial=False)
+            draw_text_screen(["Beacon flood..."], full=True)
             beacon_flood("", "wlan0mon")
-            draw_text_screen(["Done", "SELECT back"], partial=True)
+            draw_text_screen(["Done"], full=True)
             time.sleep(1)
-            render_menu()
+            render_menu(full=True)
             return
 
         if item == "Power Off":
@@ -424,7 +466,8 @@ def main():
     btn_down.when_pressed = on_down
     btn_select.when_pressed = on_select
 
-    render_menu()
+    # Full refresh on first menu
+    render_menu(full=True)
 
     try:
         while True:
