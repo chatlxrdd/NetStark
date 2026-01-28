@@ -51,7 +51,7 @@ def clear_screen():
 
 def draw_menu_image(index):
     """Rysuje menu z zaznaczeniem"""
-    global epd, font_item
+    global epd, font_item_menu
     image = Image.new('1', (epd.height, epd.width), 255)
     draw = ImageDraw.Draw(image)
 
@@ -61,7 +61,7 @@ def draw_menu_image(index):
     y = 35
     for i, item in enumerate(menu_items):
         prefix = "> " if i == index else "  "
-        draw.text((10, y), prefix + item, font=font_item, fill=0)
+        draw.text((10, y), prefix + item, font=font_item_menu, fill=0)
         y += 18
 
     return image
@@ -74,10 +74,11 @@ def power_off():
     subprocess.run(['sudo', 'poweroff'])
 
 def main():
-    global epd, font_item, current_index, screen_state
+    global epd, font_item_menu, current_index, screen_state
     try:
         epd = epd2in13_V4.EPD()
-        font_item = ImageFont.truetype(fontsdir, 12)
+        font_item_menu = ImageFont.truetype(fontsdir, 20)
+        font_item = ImageFont.truetype(fontsdir, 10)
         epd.init()
 
         # SPLASH na start
@@ -119,7 +120,7 @@ def main():
                 logging.info("Starting WiFi scan...")
                 scan_wifi("wlan0mon")
                 # plik CSV znajduje sie w katalogu "data" obok skryptu
-                csv_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data')
+                csv_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data/scans')
                 csv_files = glob.glob(os.path.join(csv_dir, '*.csv'))
                 if not csv_files:
                     logging.info("Brak plikow CSV w katalogu: %s", csv_dir)
@@ -148,9 +149,9 @@ def main():
                         time.sleep(2)
                     else:
                         # przygotuj widok listy z nawigacja przyciskami
-                        title_font = ImageFont.truetype(os.path.join(fon, 'Font.ttc'), 16)
-                        line_height = 14
-                        top_y = 30
+                        title_font = ImageFont.truetype(fontsdir, 16)
+                        line_height = 10
+                        top_y = 25
                         bottom_info = "UP/DOWN: przewijaj  SELECT: powrot"
                         # kolumny, które chcemy wyświetlać
                         desired_cols = ["BSSID", "Channel", "Privacy", "Key"]
@@ -158,8 +159,8 @@ def main():
                         start_idx = 0
                         cursor = 0
                         # ile linii (wierszy) można wyświetlić na stronie (zostaw miejsce na info)
-                        page_height = epd.width - top_y - 18  # 18 na info
-                        lines_per_page = max(1, page_height // line_height)
+                        page_height = epd.height - top_y - 1  # 18 na info
+                        lines_per_page = 4 # dostosuj do rozmiaru czcionki i ekranu
 
                         # jeśli mamy nagłówek, ustal indeksy dla desired_cols (case-insensitive, dopasowania alternatywne)
                         col_indices = None
@@ -270,7 +271,7 @@ def main():
                 draw.text((10, 10), "Wczytywanie sieci...", font=font_item, fill=0)
                 epd.displayPartial(epd.getbuffer(image))
                 
-                csv_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data')
+                csv_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data/scans')
                 csv_files = glob.glob(os.path.join(csv_dir, '*.csv'))
                 
                 if not csv_files:
@@ -279,6 +280,9 @@ def main():
                     draw.text((10, 10), "Brak plikow .csv w data", font=font_item, fill=0)
                     epd.displayPartial(epd.getbuffer(image))
                     time.sleep(2)
+                    image = draw_menu_image(current_index)
+                    epd.displayPartial(epd.getbuffer(image))
+                    return
                 else:
                     latest_csv = max(csv_files, key=os.path.getmtime)
                     rows = []
