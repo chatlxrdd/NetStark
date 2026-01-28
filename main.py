@@ -1,27 +1,32 @@
 #!/usr/bin/env python3
-# -*- coding:utf-8 -*-
+# -*- coding: utf-8 -*-
 
-import sys
 import os
+import sys
 import time
 import logging
 import subprocess
-import random
-import string
-from scripts.pentests import scan_wifi, deauth, probe_request_flood, beacon_flood
-BASE_DIR = os.path.dirname(os.path.realpath(__file__))
-fontsdir = os.path.join(BASE_DIR, 'fonts', 'Font.ttc')
-libdir = os.path.join(BASE_DIR, 'lib')
+import glob
+import csv
+import threading
+import re
 
-# picdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'pic')
-if os.path.exists(libdir):
-    sys.path.append(libdir)
-from lib.waveshare_epd import epd2in13_V4
 from PIL import Image, ImageDraw, ImageFont
 from gpiozero import Button
-import glob, csv
-import threading
-import threading
+
+# Your pentest actions (must exist)
+from scripts.pentests import scan_wifi, deauth, probe_request_flood, beacon_flood
+
+# Paths
+BASE_DIR = os.path.dirname(os.path.realpath(__file__))
+FONT_PATH = os.path.join(BASE_DIR, "fonts", "Font.ttc")
+LIB_DIR = os.path.join(BASE_DIR, "lib")
+DATA_SCANS = os.path.join(BASE_DIR, "data", "scans")
+
+if os.path.exists(LIB_DIR):
+    sys.path.append(LIB_DIR)
+
+from lib.waveshare_epd import epd2in13_V4
 
 logging.basicConfig(level=logging.INFO, filename='/var/log/epaper.log')
 
@@ -38,567 +43,398 @@ menu_items = [
     "Power Off",
 ]
 
+# globals for menu
 current_index = 0
 epd = None
-font_item = None
-screen_state = "splash"  # splash -> menu
+font_menu = None
+font_small = None
 
-def clear_screen():
-    """Czyści ekran przy wyłączaniu"""
-    global epd
-    epd.init()
-    epd.Clear(0xFF)
-    epd.sleep()
-    logging.info("Screen cleared")
+
+def load_airodump_aps(csv_path):
+    """Parse airodump-ng CSV and return AP list: {bssid, channel, privacy, essid}.
+    Stops at 'Station MAC' section.
+    """
+    aps = []
+    with open(csv_path, newline='', encoding='utf-8', errors='ignore') as f:
+        reader = csv.reader(f)
+        header = None
+        for row in reader:
+            if not row:
+                continue
+
+            first = row[0].strip().lower()
+            if first == "station mac":
+                break
+            if first == "bssid":
+                header = [c.strip().lower() for c in row]
+                continue
+            if not header:
+                continue
+
+            def get(col, default=""):
+                if col in header:
+                    i = header.index(col)
+                    return row[i].strip() if i < len(row) else default
+                return default
+
+            bssid = get("bssid")
+            if not re.match(r"^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$", bssid):
+                continue
+
+            aps.append({
+                "bssid": bssid,
+                "channel": get("channel"),
+                "privacy": get("privacy"),
+                "essid": get("essid"),
+            })
+
+    return aps
+
+
+def draw_text_screen(lines, partial=True):
+    """Simple multiline text screen."""
+    image = Image.new('1', (epd.height, epd.width), 255)
+    draw = ImageDraw.Draw(image)
+    y = 5
+    for line in lines:
+        draw.text((10, y), line, font=font_small, fill=0)
+        y += 14
+
+    if partial:
+        epd.displayPartial(epd.getbuffer(image))
+    else:
+        epd.display(epd.getbuffer(image))
+
 
 def draw_menu_image(index):
-    """Rysuje menu z zaznaczeniem"""
-    global epd, font_item_menu
     image = Image.new('1', (epd.height, epd.width), 255)
     draw = ImageDraw.Draw(image)
 
-    font_title = ImageFont.truetype(fontsdir, 16)
-    draw.text((10, 5), "Menu", font=font_title, fill=0)
+    draw.text((10, 5), "Menu", font=font_menu, fill=0)
 
     y = 35
     for i, item in enumerate(menu_items):
         prefix = "> " if i == index else "  "
-        draw.text((10, y), prefix + item, font=font_item_menu, fill=0)
+        draw.text((10, y), prefix + item, font=font_small, fill=0)
         y += 18
 
     return image
 
+
+def clear_screen():
+    epd.init()
+    epd.Clear(0xFF)
+    epd.sleep()
+
+
 def power_off():
-    """Wyłącza Raspberry Pi"""
-    logging.info("Powering off...")
-    clear_screen()
+    draw_text_screen(["Power off..."], partial=False)
     time.sleep(1)
+    clear_screen()
     subprocess.run(['sudo', 'poweroff'])
 
-def main():
-    global epd, font_item_menu, current_index, screen_state
-    try:
-        epd = epd2in13_V4.EPD()
-        font_item_menu = ImageFont.truetype(fontsdir, 18)
-        font_item = ImageFont.truetype(fontsdir, 10)
-        epd.init()
 
-        # SPLASH na start
-        # show_splash()
-        
-        # Przejdź do menu
-        screen_state = "menu"
-        current_index = 0
-        image = draw_menu_image(0)
-        epd.display(epd.getbuffer(image))
+def ap_list_view(aps, title, on_exit):
+    """AP list viewer: UP/DOWN scroll, SELECT back."""
+    state = {"cursor": 0, "start": 0}
+    PER_PAGE = 5
 
-        # Przyciski
-        btn_select = Button(BTN_SELECT_PIN, pull_up=True, bounce_time=0.2)
-        btn_up     = Button(BTN_UP_PIN,     pull_up=True, bounce_time=0.2)
-        btn_down   = Button(BTN_DOWN_PIN,   pull_up=True, bounce_time=0.2)
+    def draw():
+        image = Image.new('1', (epd.height, epd.width), 255)
+        draw = ImageDraw.Draw(image)
+        draw.text((10, 5), title, font=font_small, fill=0)
 
-        def on_up():
-            global current_index
-            current_index = (current_index - 1) % len(menu_items)
-            image = draw_menu_image(current_index)
-            epd.displayPartial(epd.getbuffer(image))
-            logging.info("Menu: %s", menu_items[current_index])
+        start = state["start"]
+        end = min(start + PER_PAGE, len(aps))
+        y = 25
 
-        def on_down():
-            global current_index
-            current_index = (current_index + 1) % len(menu_items)
-            image = draw_menu_image(current_index)
-            epd.displayPartial(epd.getbuffer(image))
-            logging.info("Menu: %s", menu_items[current_index])
+        for idx in range(start, end):
+            ap = aps[idx]
+            prefix = "> " if idx == state["cursor"] else "  "
+            essid = (ap["essid"] or "<hidden>")[:14]
+            ch = ap["channel"] or "?"
+            priv = (ap["privacy"] or "?")[:6]
+            line = f"{essid} ch{ch} {priv}"
+            draw.text((10, y), prefix + line, font=font_small, fill=0)
+            y += 18
 
-        def on_select(menu_item):
-            menu_item = menu_items[current_index]
-            logging.info("Selected: %s", menu_item)
-            if menu_item == "Scan WiFi":
-                image = Image.new('1', (epd.height, epd.width), 255)
-                draw = ImageDraw.Draw(image)
-                draw.text((10, 10), "Skanowanie WiFi...", font=font_item, fill=0)
-                epd.displayPartial(epd.getbuffer(image))
-                logging.info("Starting WiFi scan...")
-                scan_wifi("wlan0mon")
-                # plik CSV znajduje sie w katalogu "data" obok skryptu
-                csv_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data/scans')
-                csv_files = glob.glob(os.path.join(csv_dir, '*.csv'))
-                if not csv_files:
-                    logging.info("Brak plikow CSV w katalogu: %s", csv_dir)
-                    image = Image.new('1', (epd.height, epd.width), 255)
-                    draw = ImageDraw.Draw(image)
-                    draw.text((10, 10), "Brak plikow .csv w data", font=font_item, fill=0)
-                    epd.displayPartial(epd.getbuffer(image))
-                    time.sleep(2)
-                else:
-                    latest_csv = max(csv_files, key=os.path.getmtime)
-                    logging.info("Wczytywanie CSV: %s", latest_csv)
-                    rows = []
-                    header = None
-                    try:
-                        with open(latest_csv, newline='', encoding='utf-8') as f:
-                            reader = csv.reader(f)
-                            header = next(reader, None)
-                            for r in reader:
-                                rows.append(r)
-                    except Exception as e:
-                        logging.exception("Blad podczas czytania CSV")
-                        image = Image.new('1', (epd.height, epd.width), 255)
-                        draw = ImageDraw.Draw(image)
-                        draw.text((10, 10), "Blad odczytu CSV", font=font_item, fill=0)
-                        epd.displayPartial(epd.getbuffer(image))
-                        time.sleep(2)
-                    else:
-                        # przygotuj widok listy z nawigacja przyciskami
-                        title_font = ImageFont.truetype(fontsdir, 16)
-                        line_height = 10
-                        top_y = 25
-                        bottom_info = "UP/DOWN: przewijaj  SELECT: powrot"
-                        # kolumny, które chcemy wyświetlać
-                        desired_cols = ["BSSID", "Channel", "Privacy", "Key"]
-                        # stan widoku
-                        start_idx = 0
-                        cursor = 0
-                        # ile linii (wierszy) można wyświetlić na stronie (zostaw miejsce na info)
-                        page_height = epd.height - top_y - 1  # 18 na info
-                        lines_per_page = 4 # dostosuj do rozmiaru czcionki i ekranu
+        draw.text((10, epd.width - 16), "SELECT: back", font=font_small, fill=0)
+        epd.displayPartial(epd.getbuffer(image))
 
-                        # jeśli mamy nagłówek, ustal indeksy dla desired_cols (case-insensitive, dopasowania alternatywne)
-                        col_indices = None
-                        if header:
-                            hdr_lower = [h.strip().lower() for h in header]
-                            col_indices = []
-                            for col in desired_cols:
-                                col_l = col.lower()
-                                # możliwe alternatywy (np. chanel -> channel)
-                                if col_l == "channel":
-                                    candidates = ["channel", "chanel", "chan"]
-                                else:
-                                    candidates = [col_l]
-                                idx = None
-                                for c in candidates:
-                                    if c in hdr_lower:
-                                        idx = hdr_lower.index(c)
-                                        break
-                                col_indices.append(idx)
-                        else:
-                            # brak nagłówka -> wybierz pierwsze cztery kolumny
-                            col_indices = [i if i < 10000 and i < 1000 else None for i in range(len(desired_cols))]
-                            # fallback to sequential indices 0..3
-                            col_indices = list(range(min(len(desired_cols), 4)))
+    def up():
+        if state["cursor"] > 0:
+            state["cursor"] -= 1
+        if state["cursor"] < state["start"]:
+            state["start"] = state["cursor"]
+        draw()
 
-                        def draw_csv_view():
-                            image = Image.new('1', (epd.height, epd.width), 255)
-                            draw = ImageDraw.Draw(image)
-                            # tytul
-                            draw.text((10, 5), "Scan: " + os.path.basename(latest_csv), font=title_font, fill=0)
-                            y = top_y
-                            # naglowek stały - pokaz to co użytkownik chciał
-                            header_text = " | ".join(desired_cols)
-                            draw.text((10, y), header_text[:epd.height//6], font=font_item, fill=0)
-                            y += line_height
-                            # pokaz widok strony
-                            for i in range(start_idx, min(start_idx + lines_per_page, len(rows))):
-                                prefix = "> " if i == cursor else "  "
-                                row = rows[i]
-                                parts = []
-                                for ci in col_indices:
-                                    val = ""
-                                    if isinstance(ci, int) and ci is not None and ci < len(row):
-                                        val = row[ci]
-                                    parts.append(val)
-                                text = " | ".join(parts)
-                                # przytnij do rozsadnego rozmiaru
-                                max_chars = 40
-                                draw.text((10, y), prefix + text[:max_chars], font=font_item, fill=0)
-                                y += line_height
-                            # dolny srodkowy tekst informacyjny
-                            info_w = draw.textsize(bottom_info, font=font_item)[0]
-                            info_x = (epd.height - info_w) // 2
-                            draw.text((info_x, epd.width - 16), bottom_info, font=font_item, fill=0)
-                            epd.displayPartial(epd.getbuffer(image))
+    def down():
+        if state["cursor"] < len(aps) - 1:
+            state["cursor"] += 1
+        if state["cursor"] >= state["start"] + PER_PAGE:
+            state["start"] = state["cursor"] - PER_PAGE + 1
+        draw()
 
-                        # zapamietaj stare handlery by przywrocic menu
-                        old_up = btn_up.when_pressed
-                        old_down = btn_down.when_pressed
-                        old_select = btn_select.when_pressed
+    btn_up.when_pressed = up
+    btn_down.when_pressed = down
+    btn_select.when_pressed = on_exit
+    draw()
 
-                        # handlery dla widoku CSV
-                        def csv_on_up():
-                            nonlocal start_idx, cursor
-                            if cursor > 0:
-                                cursor -= 1
-                            # przesun stronę w górę jeśli kursor wyszedł poza widoczne okno
-                            if cursor < start_idx:
-                                start_idx = cursor
-                            draw_csv_view()
-                            logging.info("CSV cursor: %d start: %d", cursor, start_idx)
 
-                        def csv_on_down():
-                            nonlocal start_idx, cursor
-                            if cursor < len(rows) - 1:
-                                cursor += 1
-                            # przesun stronę w dol jeśli kursor wyszedl poza widoczne okno
-                            if cursor >= start_idx + lines_per_page:
-                                start_idx = cursor - lines_per_page + 1
-                            draw_csv_view()
-                            logging.info("CSV cursor: %d start: %d", cursor, start_idx)
-#
-                        def csv_on_select():
-                            # przywróć poprzednie handlery (powrót do menu)
-                            btn_up.when_pressed = old_up
-                            btn_down.when_pressed = old_down
-                            btn_select.when_pressed = old_select
-                            # narysuj menu ponownie
-                            try:
-                                image = draw_menu_image(current_index)
-                                epd.displayPartial(epd.getbuffer(image))
-                                logging.info("Returned to menu from CSV view")
-                            except Exception:
-                                logging.exception("Error while returning to menu")
+def deauth_flow():
+    os.makedirs(DATA_SCANS, exist_ok=True)
+    csv_files = glob.glob(os.path.join(DATA_SCANS, "*.csv"))
+    if not csv_files:
+        draw_text_screen(["No scans in", "data/scans"], partial=True)
+        time.sleep(2)
+        return
 
-                        # ustaw nowe handlery
-                        btn_up.when_pressed = csv_on_up
-                        btn_down.when_pressed = csv_on_down
-                        btn_select.when_pressed = csv_on_select
+    latest_csv = max(csv_files, key=os.path.getmtime)
+    aps = load_airodump_aps(latest_csv)
+    if not aps:
+        draw_text_screen(["No AP in CSV"], partial=True)
+        time.sleep(2)
+        return
 
-                        # pokaż pierwszy widok
-                        draw_csv_view()
-                        logging.info("Wyswietlono zawartosc CSV: %s", latest_csv)
-                        
-            if menu_item == "Deauth":
-                image = Image.new('1', (epd.height, epd.width), 255)
-                draw = ImageDraw.Draw(image)
-                draw.text((10, 10), "Wczytywanie sieci...", font=font_item, fill=0)
-                epd.displayPartial(epd.getbuffer(image))
-                
-                csv_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data/scans')
-                csv_files = glob.glob(os.path.join(csv_dir, '*.csv'))
-                
-                if not csv_files:
-                    image = Image.new('1', (epd.height, epd.width), 255)
-                    draw = ImageDraw.Draw(image)
-                    draw.text((10, 10), "Brak plikow .csv w data", font=font_item, fill=0)
-                    epd.displayPartial(epd.getbuffer(image))
-                    time.sleep(2)
-                    image = draw_menu_image(current_index)
-                    epd.displayPartial(epd.getbuffer(image))
-                    return
-                else:
-                    latest_csv = max(csv_files, key=os.path.getmtime)
-                    rows = []
-                    try:
-                        with open(latest_csv, newline='', encoding='utf-8') as f:
-                            reader = csv.reader(f)
-                            next(reader, None)
-                            for r in reader:
-                                rows.append(r)
-                    except Exception as e:
-                        logging.exception("Blad podczas czytania CSV")
-                        time.sleep(2)
-                        return
-                    
-                    if not rows:
-                        image = Image.new('1', (epd.height, epd.width), 255)
-                        draw = ImageDraw.Draw(image)
-                        draw.text((10, 10), "Brak sieci WiFi", font=font_item, fill=0)
-                        epd.displayPartial(epd.getbuffer(image))
-                        time.sleep(2)
-                        return
-                    
-                    old_up = btn_up.when_pressed
-                    old_down = btn_down.when_pressed
-                    old_select = btn_select.when_pressed
-                    
-                    wifi_cursor = 0
-                    deauth_process = None
-                    output_lines = []
-                    
-                    def draw_deauth_menu():
-                        image = Image.new('1', (epd.height, epd.width), 255)
-                        draw = ImageDraw.Draw(image)
-                        draw.text((10, 5), "Deauth mode:", font=font_item, fill=0)
-                        y = 25
-                        options = ["Pojedynczy AP", "Deauth All"]
-                        for i in range(min(len(options), 2)):
-                            prefix = "> " if i == wifi_cursor else "  "
-                            draw.text((10, y), prefix + options[i], font=font_item, fill=0)
-                            y += 18
-                        epd.displayPartial(epd.getbuffer(image))
-                    
-                    def draw_deauth_output():
-                        image = Image.new('1', (epd.height, epd.width), 255)
-                        draw = ImageDraw.Draw(image)
-                        draw.text((10, 5), "Deauth running...", font=font_item, fill=0)
-                        y = 20
-                        # Display last lines of output
-                        for line in output_lines[-6:]:
-                            draw.text((10, y), line[:40], font=font_item, fill=0)
-                            y += 12
-                        draw.text((10, epd.width - 16), "SELECT: stop", font=font_item, fill=0)
-                        epd.displayPartial(epd.getbuffer(image))
-                    
-                    def deauth_menu_up():
-                        nonlocal wifi_cursor
-                        wifi_cursor = (wifi_cursor - 1) % 2
-                        draw_deauth_menu()
-                    
-                    def deauth_menu_down():
-                        nonlocal wifi_cursor
-                        wifi_cursor = (wifi_cursor + 1) % 2
-                        draw_deauth_menu()
-                    
-                    def deauth_menu_select():
-                        nonlocal wifi_cursor
-                        if wifi_cursor == 0:
-                            show_wifi_list()
-                        else:
-                            deauth_all_networks()
-                    
-                    def show_wifi_list():
-                        nonlocal wifi_cursor
-                        wifi_cursor = 0
-                        
-                        def draw_wifi_list():
-                            image = Image.new('1', (epd.height, epd.width), 255)
-                            draw = ImageDraw.Draw(image)
-                            draw.text((10, 5), "Wybierz siec:", font=font_item, fill=0)
-                            y = 25
-                            for i in range(min(5, len(rows))):
-                                prefix = "> " if i == wifi_cursor else "  "
-                                ssid = rows[i][0] if rows[i] else "?"
-                                draw.text((10, y), prefix + ssid[:20], font=font_item, fill=0)
-                                y += 18
-                            epd.displayPartial(epd.getbuffer(image))
-                        
-                        def wifi_up():
-                            nonlocal wifi_cursor
-                            wifi_cursor = (wifi_cursor - 1) % len(rows)
-                            draw_wifi_list()
-                        
-                        def wifi_down():
-                            nonlocal wifi_cursor
-                            wifi_cursor = (wifi_cursor + 1) % len(rows)
-                            draw_wifi_list()
-                        
-                        def wifi_select():
-                            nonlocal deauth_process, output_lines
-                            selected_network = rows[wifi_cursor][0]
-                            bssid = rows[wifi_cursor][1] if len(rows[wifi_cursor]) > 1 else ""
-                            logging.info("Wybrana siec: %s (%s)", selected_network, bssid)
-                            
-                            output_lines = []
-                            deauth_process = subprocess.Popen(
-                                ['mdk4', 'wlan0mon', 'd', '-b', bssid],
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT,
-                                text=True,
-                                bufsize=1
-                            )
-                            
-                            btn_up.when_pressed = lambda: None
-                            btn_down.when_pressed = lambda: None
-                            btn_select.when_pressed = stop_deauth
-                            
-                            def read_output():
-                                for line in deauth_process.stdout:
-                                    output_lines.append(line.strip())
-                                    draw_deauth_output()
-                            
-                            thread = threading.Thread(target=read_output, daemon=True)
-                            thread.start()
-                            draw_deauth_output()
-                        
-                        btn_up.when_pressed = wifi_up
-                        btn_down.when_pressed = wifi_down
-                        btn_select.when_pressed = wifi_select
-                        draw_wifi_list()
-                    
-                    def deauth_all_networks():
-                        nonlocal deauth_process, output_lines
-                        output_lines = []
-                        deauth_process = subprocess.Popen(
-                            ['mdk4', 'wlan0mon', 'd'],
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            text=True,
-                            bufsize=1
-                        )
-                        
-                        btn_up.when_pressed = lambda: None
-                        btn_down.when_pressed = lambda: None
-                        btn_select.when_pressed = stop_deauth
-                        
-                        def read_output():
-                            for line in deauth_process.stdout:
-                                output_lines.append(line.strip())
-                                draw_deauth_output()
-                        
-                        thread = threading.Thread(target=read_output, daemon=True)
-                        thread.start()
-                        draw_deauth_output()
-                    
-                    def stop_deauth():
-                        nonlocal deauth_process
-                        if deauth_process:
-                            deauth_process.terminate()
-                            deauth_process.wait(timeout=2)
-                        btn_up.when_pressed = old_up
-                        btn_down.when_pressed = old_down
-                        btn_select.when_pressed = old_select
-                        image = draw_menu_image(current_index)
-                        epd.displayPartial(epd.getbuffer(image))
-                    
-                    btn_up.when_pressed = deauth_menu_up
-                    btn_down.when_pressed = deauth_menu_down
-                    btn_select.when_pressed = deauth_menu_select
-                    
-                    draw_deauth_menu()
-                    
-                    def deauth_menu_up():
-                        nonlocal wifi_cursor
-                        wifi_cursor = (wifi_cursor - 1) % 2
-                        draw_deauth_menu()
-                    
-                    def deauth_menu_down():
-                        nonlocal wifi_cursor
-                        wifi_cursor = (wifi_cursor + 1) % 2
-                        draw_deauth_menu()
-                    
-                    def deauth_menu_select():
-                        nonlocal wifi_cursor
-                        if wifi_cursor == 0:
-                            show_wifi_list()
-                        else:
-                            deauth_all_networks()
-                    
-                    def show_wifi_list():
-                        nonlocal wifi_cursor
-                        wifi_cursor = 0
-                        
-                        def draw_wifi_list():
-                            image = Image.new('1', (epd.height, epd.width), 255)
-                            draw = ImageDraw.Draw(image)
-                            draw.text((10, 5), "Wybierz siec:", font=font_item, fill=0)
-                            y = 25
-                            for i in range(min(5, len(rows))):
-                                prefix = "> " if i == wifi_cursor else "  "
-                                ssid = rows[i][0] if rows[i] else "?"
-                                draw.text((10, y), prefix + ssid[:20], font=font_item, fill=0)
-                                y += 18
-                            epd.displayPartial(epd.getbuffer(image))
-                        
-                        def wifi_up():
-                            nonlocal wifi_cursor
-                            wifi_cursor = (wifi_cursor - 1) % len(rows)
-                            draw_wifi_list()
-                        
-                        def wifi_down():
-                            nonlocal wifi_cursor
-                            wifi_cursor = (wifi_cursor + 1) % len(rows)
-                            draw_wifi_list()
-                        
-                        def wifi_select():
-                            selected_network = rows[wifi_cursor][0]
-                            bssid = rows[wifi_cursor][1] if len(rows[wifi_cursor]) > 1 else ""
-                            logging.info("Wybrana siec: %s (%s)", selected_network, bssid)
-                            
-                            image = Image.new('1', (epd.height, epd.width), 255)
-                            draw = ImageDraw.Draw(image)
-                            draw.text((10, 10), "Deauth: " + selected_network[:15], font=font_item, fill=0)
-                            epd.displayPartial(epd.getbuffer(image))
-                            
-                            if bssid:
-                                deauth(bssid, "wlan0mon")
-                            
-                            time.sleep(2)
-                            return_to_menu()
-                        
-                        btn_up.when_pressed = wifi_up
-                        btn_down.when_pressed = wifi_down
-                        btn_select.when_pressed = wifi_select
-                        draw_wifi_list()
-                    
-                    def deauth_all_networks():
-                        image = Image.new('1', (epd.height, epd.width), 255)
-                        draw = ImageDraw.Draw(image)
-                        draw.text((10, 10), "Deauth All...", font=font_item, fill=0)
-                        epd.displayPartial(epd.getbuffer(image))
-                        
-                        for row in rows:
-                            bssid = row[1] if len(row) > 1 else ""
-                            if bssid:
-                                logging.info("Deauth all: %s", bssid)
-                                deauth(bssid, "wlan0mon")
-                        
-                        time.sleep(2)
-                        return_to_menu()
-                    
-                    def return_to_menu():
-                        btn_up.when_pressed = old_up
-                        btn_down.when_pressed = old_down
-                        btn_select.when_pressed = old_select
-                        image = draw_menu_image(current_index)
-                        epd.displayPartial(epd.getbuffer(image))
-                    
-                    btn_up.when_pressed = deauth_menu_up
-                    btn_down.when_pressed = deauth_menu_down
-                    btn_select.when_pressed = deauth_menu_select
-                    
-                    draw_deauth_menu()
+    old_up, old_down, old_select = btn_up.when_pressed, btn_down.when_pressed, btn_select.when_pressed
+
+    state = {"screen": "mode", "cursor": 0, "start": 0}
+    proc = {"p": None}
+    output = []
+
+    def restore_menu():
+        btn_up.when_pressed, btn_down.when_pressed, btn_select.when_pressed = old_up, old_down, old_select
+        epd.displayPartial(epd.getbuffer(draw_menu_image(current_index)))
+
+    def draw_mode():
+        image = Image.new('1', (epd.height, epd.width), 255)
+        draw = ImageDraw.Draw(image)
+        draw.text((10, 5), "Deauth:", font=font_small, fill=0)
+        opts = ["Single AP", "Deauth All", "Back"]
+        y = 25
+        for i, txt in enumerate(opts):
+            prefix = "> " if i == state["cursor"] else "  "
+            draw.text((10, y), prefix + txt, font=font_small, fill=0)
+            y += 18
+        epd.displayPartial(epd.getbuffer(image))
+
+    def draw_ap_list():
+        image = Image.new('1', (epd.height, epd.width), 255)
+        draw = ImageDraw.Draw(image)
+        draw.text((10, 5), "Pick AP:", font=font_small, fill=0)
+
+        PER_PAGE = 5
+        start = state["start"]
+        end = min(start + PER_PAGE, len(aps))
+        y = 25
+
+        for idx in range(start, end):
+            ap = aps[idx]
+            prefix = "> " if idx == state["cursor"] else "  "
+            essid = (ap["essid"] or "<hidden>")[:14]
+            ch = ap["channel"] or "?"
+            priv = (ap["privacy"] or "?")[:6]
+            draw.text((10, y), prefix + f"{essid} ch{ch} {priv}", font=font_small, fill=0)
+            y += 18
+
+        draw.text((10, epd.width - 16), "SEL: start", font=font_small, fill=0)
+        epd.displayPartial(epd.getbuffer(image))
+
+    def draw_output():
+        image = Image.new('1', (epd.height, epd.width), 255)
+        draw = ImageDraw.Draw(image)
+        draw.text((10, 5), "Deauth running", font=font_small, fill=0)
+        y = 20
+        for line in output[-6:]:
+            draw.text((10, y), line[:40], font=font_small, fill=0)
+            y += 12
+        draw.text((10, epd.width - 16), "SELECT: stop", font=font_small, fill=0)
+        epd.displayPartial(epd.getbuffer(image))
+
+    def stop_deauth():
+        p = proc["p"]
+        proc["p"] = None
+        if p:
+            p.terminate()
+            try:
+                p.wait(timeout=2)
+            except Exception:
                 pass
-            if menu_item == "Probe Request Flood":
-                image = Image.new('1', (epd.height, epd.width), 255)
-                draw = ImageDraw.Draw(image)
-                draw.text((10, 10), "Probe Request Flood...", font=font_item, fill=0)
-                epd.displayPartial(epd.getbuffer(image))
-                logging.info("Starting Probe Request Flood...")
+        restore_menu()
 
-                probe_request_flood("", "wlan0mon")
+    def start_deauth(cmd):
+        output.clear()
+        proc["p"] = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1
+        )
 
-                image = Image.new('1', (epd.height, epd.width), 255)
-                draw = ImageDraw.Draw(image)
-                draw.text((10, 10), "Flood zakonczony", font=font_item, fill=0)
-                epd.displayPartial(epd.getbuffer(image))
+        def reader():
+            for line in proc["p"].stdout:
+                output.append(line.strip())
+        threading.Thread(target=reader, daemon=True).start()
+
+        state["screen"] = "output"
+        btn_up.when_pressed = None
+        btn_down.when_pressed = None
+        btn_select.when_pressed = stop_deauth
+
+        # periodic refresh of output
+        def refresher():
+            while state["screen"] == "output" and proc["p"] is not None:
+                draw_output()
+                time.sleep(0.3)
+        threading.Thread(target=refresher, daemon=True).start()
+        draw_output()
+
+    def up():
+        if state["screen"] == "mode":
+            state["cursor"] = (state["cursor"] - 1) % 3
+            draw_mode()
+        elif state["screen"] == "list":
+            if state["cursor"] > 0:
+                state["cursor"] -= 1
+            if state["cursor"] < state["start"]:
+                state["start"] = state["cursor"]
+            draw_ap_list()
+
+    def down():
+        if state["screen"] == "mode":
+            state["cursor"] = (state["cursor"] + 1) % 3
+            draw_mode()
+        elif state["screen"] == "list":
+            if state["cursor"] < len(aps) - 1:
+                state["cursor"] += 1
+            PER_PAGE = 5
+            if state["cursor"] >= state["start"] + PER_PAGE:
+                state["start"] = state["cursor"] - PER_PAGE + 1
+            draw_ap_list()
+
+    def select():
+        if state["screen"] == "mode":
+            if state["cursor"] == 0:
+                state["screen"] = "list"
+                state["cursor"] = 0
+                state["start"] = 0
+                draw_ap_list()
+            elif state["cursor"] == 1:
+                start_deauth(["mdk4", "wlan0mon", "d"])
+            else:
+                restore_menu()
+        elif state["screen"] == "list":
+            ap = aps[state["cursor"]]
+            start_deauth(["mdk4", "wlan0mon", "d", "-b", ap["bssid"]])
+
+    btn_up.when_pressed = up
+    btn_down.when_pressed = down
+    btn_select.when_pressed = select
+
+    draw_mode()
+
+
+def main():
+    global epd, font_menu, font_small, current_index, btn_up, btn_down, btn_select
+
+    epd = epd2in13_V4.EPD()
+    epd.init()
+
+    font_menu = ImageFont.truetype(FONT_PATH, 16)
+    font_small = ImageFont.truetype(FONT_PATH, 10)
+
+    os.makedirs(DATA_SCANS, exist_ok=True)
+
+    btn_select = Button(BTN_SELECT_PIN, pull_up=True, bounce_time=0.2)
+    btn_up     = Button(BTN_UP_PIN,     pull_up=True, bounce_time=0.2)
+    btn_down   = Button(BTN_DOWN_PIN,   pull_up=True, bounce_time=0.2)
+
+    def render_menu():
+        image = draw_menu_image(current_index)
+        epd.displayPartial(epd.getbuffer(image))
+
+    def on_up():
+        global current_index
+        current_index = (current_index - 1) % len(menu_items)
+        render_menu()
+
+    def on_down():
+        global current_index
+        current_index = (current_index + 1) % len(menu_items)
+        render_menu()
+
+    def on_select():
+        item = menu_items[current_index]
+        logging.info("Selected: %s", item)
+
+        if item == "Scan WiFi":
+            draw_text_screen(["Scanning WiFi...", "wait 30s"], partial=False)
+            scan_wifi("wlan0mon")
+
+            csv_files = glob.glob(os.path.join(DATA_SCANS, "*.csv"))
+            if not csv_files:
+                draw_text_screen(["No CSV in", "data/scans"], partial=True)
                 time.sleep(2)
-                
-                image = draw_menu_image(current_index)
-                epd.displayPartial(epd.getbuffer(image))
-            if menu_item == "Beacon Flood":
-                image = Image.new('1', (epd.height, epd.width), 255)
-                draw = ImageDraw.Draw(image)
-                draw.text((10, 10), "Beacon Flood...", font=font_item, fill=0)
-                epd.displayPartial(epd.getbuffer(image))
-                logging.info("Starting Beacon Flood...")
+                render_menu()
+                return
 
-                beacon_flood("", "wlan0mon")
-
-                image = Image.new('1', (epd.height, epd.width), 255)
-                draw = ImageDraw.Draw(image)
-                draw.text((10, 10), "Flood zakonczony", font=font_item, fill=0)
-                epd.displayPartial(epd.getbuffer(image))
+            latest_csv = max(csv_files, key=os.path.getmtime)
+            aps = load_airodump_aps(latest_csv)
+            if not aps:
+                draw_text_screen(["No AP in CSV"], partial=True)
                 time.sleep(2)
-                
-                image = draw_menu_image(current_index)
-                epd.displayPartial(epd.getbuffer(image))
-            if menu_item == "Power Off":
-                power_off()
-            
-            # Tutaj dodaj inne akcje: WiFi scan, etc.
+                render_menu()
+                return
 
-        btn_up.when_pressed = on_up
-        btn_down.when_pressed = on_down
-        btn_select.when_pressed = on_select
+            old_up, old_down, old_select = btn_up.when_pressed, btn_down.when_pressed, btn_select.when_pressed
 
-        # Główna pętla
+            def back_to_menu():
+                btn_up.when_pressed, btn_down.when_pressed, btn_select.when_pressed = old_up, old_down, old_select
+                render_menu()
+
+            ap_list_view(aps, "AP list", back_to_menu)
+            return
+
+        if item == "Deauth":
+            deauth_flow()
+            return
+
+        if item == "Probe Request Flood":
+            draw_text_screen(["Probe flood...", "(running)"], partial=False)
+            probe_request_flood("", "wlan0mon")
+            draw_text_screen(["Done", "SELECT back"], partial=True)
+            time.sleep(1)
+            render_menu()
+            return
+
+        if item == "Beacon Flood":
+            draw_text_screen(["Beacon flood...", "(running)"], partial=False)
+            beacon_flood("", "wlan0mon")
+            draw_text_screen(["Done", "SELECT back"], partial=True)
+            time.sleep(1)
+            render_menu()
+            return
+
+        if item == "Power Off":
+            power_off()
+            return
+
+    btn_up.when_pressed = on_up
+    btn_down.when_pressed = on_down
+    btn_select.when_pressed = on_select
+
+    render_menu()
+
+    try:
         while True:
             time.sleep(0.1)
-
     except KeyboardInterrupt:
-        clear_screen()
+        pass
     finally:
+        clear_screen()
         epd2in13_V4.epdconfig.module_exit(cleanup=True)
+
 
 if __name__ == "__main__":
     main()
