@@ -9,13 +9,14 @@ import subprocess
 import random
 import string
 from scripts.pentests import scan_wifi, deauth, probe_request_flood, beacon_flood
+BASE_DIR = os.path.dirname(os.path.realpath(__file__))
+fontsdir = os.path.join(BASE_DIR, 'fonts', 'Font.ttc')
+libdir = os.path.join(BASE_DIR, 'lib')
 
 # picdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'pic')
-fontsdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'fonts')
-libdir = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'lib')
 if os.path.exists(libdir):
     sys.path.append(libdir)
-from waveshare_epd import epd2in13_V4
+from lib.waveshare_epd import epd2in13_V4
 from PIL import Image, ImageDraw, ImageFont
 from gpiozero import Button
 import glob, csv
@@ -40,20 +41,6 @@ epd = None
 font_item = None
 screen_state = "splash"  # splash -> menu
 
-def show_splash():
-    """Pokazuje bitmapę na start"""
-    global epd
-    logging.info("Showing splash bitmap...")
-    epd.init()
-    epd.Clear(0xFF)
-    
-    # Twoja bitmapa (dostosuj nazwę)
-    splash_image = Image.open(os.path.join(picdir, '2in13.bmp'))  # lub swoją
-    epd.displayPartialPartial(epd.getbuffer(splash_image))
-    time.sleep(3)  # 3s splash
-
-    #testowe wylaczyc 
-
 def clear_screen():
     """Czyści ekran przy wyłączaniu"""
     global epd
@@ -68,7 +55,7 @@ def draw_menu_image(index):
     image = Image.new('1', (epd.height, epd.width), 255)
     draw = ImageDraw.Draw(image)
 
-    font_title = ImageFont.truetype(os.path.join(fontsdir, 'Font.ttc'), 20)
+    font_title = ImageFont.truetype(fontsdir, 16)
     draw.text((10, 5), "Menu", font=font_title, fill=0)
 
     y = 35
@@ -90,7 +77,7 @@ def main():
     global epd, font_item, current_index, screen_state
     try:
         epd = epd2in13_V4.EPD()
-        font_item = ImageFont.truetype(os.path.join(fontsdir, 'Font.ttc'), 14)
+        font_item = ImageFont.truetype(fontsdir, 12)
         epd.init()
 
         # SPLASH na start
@@ -159,7 +146,7 @@ def main():
                         time.sleep(2)
                     else:
                         # przygotuj widok listy z nawigacja przyciskami
-                        title_font = ImageFont.truetype(os.path.join(picdir, 'Font.ttc'), 16)
+                        title_font = ImageFont.truetype(os.path.join(fon, 'Font.ttc'), 16)
                         line_height = 14
                         top_y = 30
                         bottom_info = "UP/DOWN: przewijaj  SELECT: powrot"
