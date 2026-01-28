@@ -20,6 +20,8 @@ from lib.waveshare_epd import epd2in13_V4
 from PIL import Image, ImageDraw, ImageFont
 from gpiozero import Button
 import glob, csv
+import threading
+import threading
 
 logging.basicConfig(level=logging.INFO, filename='/var/log/epaper.log')
 
@@ -77,7 +79,7 @@ def main():
     global epd, font_item_menu, current_index, screen_state
     try:
         epd = epd2in13_V4.EPD()
-        font_item_menu = ImageFont.truetype(fontsdir, 20)
+        font_item_menu = ImageFont.truetype(fontsdir, 18)
         font_item = ImageFont.truetype(fontsdir, 10)
         epd.init()
 
@@ -310,18 +312,149 @@ def main():
                     old_select = btn_select.when_pressed
                     
                     wifi_cursor = 0
-                    deauth_options = ["Single Network", "Deauth All"] + [rows[i][0] if rows[i] else "?" for i in range(len(rows))]
+                    deauth_process = None
+                    output_lines = []
                     
                     def draw_deauth_menu():
                         image = Image.new('1', (epd.height, epd.width), 255)
                         draw = ImageDraw.Draw(image)
                         draw.text((10, 5), "Deauth mode:", font=font_item, fill=0)
                         y = 25
-                        for i in range(min(5, 2)):
+                        options = ["Pojedynczy AP", "Deauth All"]
+                        for i in range(min(len(options), 2)):
                             prefix = "> " if i == wifi_cursor else "  "
-                            draw.text((10, y), prefix + deauth_options[i], font=font_item, fill=0)
+                            draw.text((10, y), prefix + options[i], font=font_item, fill=0)
                             y += 18
                         epd.displayPartial(epd.getbuffer(image))
+                    
+                    def draw_deauth_output():
+                        image = Image.new('1', (epd.height, epd.width), 255)
+                        draw = ImageDraw.Draw(image)
+                        draw.text((10, 5), "Deauth running...", font=font_item, fill=0)
+                        y = 20
+                        # Display last lines of output
+                        for line in output_lines[-6:]:
+                            draw.text((10, y), line[:40], font=font_item, fill=0)
+                            y += 12
+                        draw.text((10, epd.width - 16), "SELECT: stop", font=font_item, fill=0)
+                        epd.displayPartial(epd.getbuffer(image))
+                    
+                    def deauth_menu_up():
+                        nonlocal wifi_cursor
+                        wifi_cursor = (wifi_cursor - 1) % 2
+                        draw_deauth_menu()
+                    
+                    def deauth_menu_down():
+                        nonlocal wifi_cursor
+                        wifi_cursor = (wifi_cursor + 1) % 2
+                        draw_deauth_menu()
+                    
+                    def deauth_menu_select():
+                        nonlocal wifi_cursor
+                        if wifi_cursor == 0:
+                            show_wifi_list()
+                        else:
+                            deauth_all_networks()
+                    
+                    def show_wifi_list():
+                        nonlocal wifi_cursor
+                        wifi_cursor = 0
+                        
+                        def draw_wifi_list():
+                            image = Image.new('1', (epd.height, epd.width), 255)
+                            draw = ImageDraw.Draw(image)
+                            draw.text((10, 5), "Wybierz siec:", font=font_item, fill=0)
+                            y = 25
+                            for i in range(min(5, len(rows))):
+                                prefix = "> " if i == wifi_cursor else "  "
+                                ssid = rows[i][0] if rows[i] else "?"
+                                draw.text((10, y), prefix + ssid[:20], font=font_item, fill=0)
+                                y += 18
+                            epd.displayPartial(epd.getbuffer(image))
+                        
+                        def wifi_up():
+                            nonlocal wifi_cursor
+                            wifi_cursor = (wifi_cursor - 1) % len(rows)
+                            draw_wifi_list()
+                        
+                        def wifi_down():
+                            nonlocal wifi_cursor
+                            wifi_cursor = (wifi_cursor + 1) % len(rows)
+                            draw_wifi_list()
+                        
+                        def wifi_select():
+                            nonlocal deauth_process, output_lines
+                            selected_network = rows[wifi_cursor][0]
+                            bssid = rows[wifi_cursor][1] if len(rows[wifi_cursor]) > 1 else ""
+                            logging.info("Wybrana siec: %s (%s)", selected_network, bssid)
+                            
+                            output_lines = []
+                            deauth_process = subprocess.Popen(
+                                ['mdk4', 'wlan0mon', 'd', '-b', bssid],
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT,
+                                text=True,
+                                bufsize=1
+                            )
+                            
+                            btn_up.when_pressed = lambda: None
+                            btn_down.when_pressed = lambda: None
+                            btn_select.when_pressed = stop_deauth
+                            
+                            def read_output():
+                                for line in deauth_process.stdout:
+                                    output_lines.append(line.strip())
+                                    draw_deauth_output()
+                            
+                            thread = threading.Thread(target=read_output, daemon=True)
+                            thread.start()
+                            draw_deauth_output()
+                        
+                        btn_up.when_pressed = wifi_up
+                        btn_down.when_pressed = wifi_down
+                        btn_select.when_pressed = wifi_select
+                        draw_wifi_list()
+                    
+                    def deauth_all_networks():
+                        nonlocal deauth_process, output_lines
+                        output_lines = []
+                        deauth_process = subprocess.Popen(
+                            ['mdk4', 'wlan0mon', 'd'],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                            bufsize=1
+                        )
+                        
+                        btn_up.when_pressed = lambda: None
+                        btn_down.when_pressed = lambda: None
+                        btn_select.when_pressed = stop_deauth
+                        
+                        def read_output():
+                            for line in deauth_process.stdout:
+                                output_lines.append(line.strip())
+                                draw_deauth_output()
+                        
+                        thread = threading.Thread(target=read_output, daemon=True)
+                        thread.start()
+                        draw_deauth_output()
+                    
+                    def stop_deauth():
+                        nonlocal deauth_process
+                        if deauth_process:
+                            deauth_process.terminate()
+                            deauth_process.wait(timeout=2)
+                        btn_up.when_pressed = old_up
+                        btn_down.when_pressed = old_down
+                        btn_select.when_pressed = old_select
+                        image = draw_menu_image(current_index)
+                        epd.displayPartial(epd.getbuffer(image))
+                    
+                    btn_up.when_pressed = deauth_menu_up
+                    btn_down.when_pressed = deauth_menu_down
+                    btn_select.when_pressed = deauth_menu_select
+                    
+                    draw_deauth_menu()
                     
                     def deauth_menu_up():
                         nonlocal wifi_cursor
