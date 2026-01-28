@@ -98,14 +98,14 @@ def main():
             global current_index
             current_index = (current_index - 1) % len(menu_items)
             image = draw_menu_image(current_index)
-            epd.displayPartialPartial(epd.getbuffer(image))
+            epd.displayPartial(epd.getbuffer(image))
             logging.info("Menu: %s", menu_items[current_index])
 
         def on_down():
             global current_index
             current_index = (current_index + 1) % len(menu_items)
             image = draw_menu_image(current_index)
-            epd.displayPartialPartial(epd.getbuffer(image))
+            epd.displayPartial(epd.getbuffer(image))
             logging.info("Menu: %s", menu_items[current_index])
 
         def on_select(menu_item):
@@ -115,7 +115,7 @@ def main():
                 image = Image.new('1', (epd.height, epd.width), 255)
                 draw = ImageDraw.Draw(image)
                 draw.text((10, 10), "Skanowanie WiFi...", font=font_item, fill=0)
-                epd.displayPartialPartial(epd.getbuffer(image))
+                epd.displayPartial(epd.getbuffer(image))
                 logging.info("Starting WiFi scan...")
                 scan_wifi("wlan0mon")
                 # plik CSV znajduje sie w katalogu "data" obok skryptu
@@ -126,7 +126,7 @@ def main():
                     image = Image.new('1', (epd.height, epd.width), 255)
                     draw = ImageDraw.Draw(image)
                     draw.text((10, 10), "Brak plikow .csv w data", font=font_item, fill=0)
-                    epd.displayPartialPartialPartial(epd.getbuffer(image))
+                    epd.displayPartial(epd.getbuffer(image))
                     time.sleep(2)
                 else:
                     latest_csv = max(csv_files, key=os.path.getmtime)
@@ -144,7 +144,7 @@ def main():
                         image = Image.new('1', (epd.height, epd.width), 255)
                         draw = ImageDraw.Draw(image)
                         draw.text((10, 10), "Blad odczytu CSV", font=font_item, fill=0)
-                        epd.displayPartialPartial(epd.getbuffer(image))
+                        epd.displayPartial(epd.getbuffer(image))
                         time.sleep(2)
                     else:
                         # przygotuj widok listy z nawigacja przyciskami
@@ -214,7 +214,7 @@ def main():
                             info_w = draw.textsize(bottom_info, font=font_item)[0]
                             info_x = (epd.height - info_w) // 2
                             draw.text((info_x, epd.width - 16), bottom_info, font=font_item, fill=0)
-                            epd.displayPartialPartial(epd.getbuffer(image))
+                            epd.displayPartial(epd.getbuffer(image))
 
                         # zapamietaj stare handlery by przywrocic menu
                         old_up = btn_up.when_pressed
@@ -250,7 +250,7 @@ def main():
                             # narysuj menu ponownie
                             try:
                                 image = draw_menu_image(current_index)
-                                epd.displayPartialPartial(epd.getbuffer(image))
+                                epd.displayPartial(epd.getbuffer(image))
                                 logging.info("Returned to menu from CSV view")
                             except Exception:
                                 logging.exception("Error while returning to menu")
@@ -268,7 +268,7 @@ def main():
                 image = Image.new('1', (epd.height, epd.width), 255)
                 draw = ImageDraw.Draw(image)
                 draw.text((10, 10), "Wczytywanie sieci...", font=font_item, fill=0)
-                epd.displayPartialPartial(epd.getbuffer(image))
+                epd.displayPartial(epd.getbuffer(image))
                 
                 csv_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data')
                 csv_files = glob.glob(os.path.join(csv_dir, '*.csv'))
@@ -277,7 +277,7 @@ def main():
                     image = Image.new('1', (epd.height, epd.width), 255)
                     draw = ImageDraw.Draw(image)
                     draw.text((10, 10), "Brak plikow .csv w data", font=font_item, fill=0)
-                    epd.displayPartialPartial(epd.getbuffer(image))
+                    epd.displayPartial(epd.getbuffer(image))
                     time.sleep(2)
                 else:
                     latest_csv = max(csv_files, key=os.path.getmtime)
@@ -297,7 +297,7 @@ def main():
                         image = Image.new('1', (epd.height, epd.width), 255)
                         draw = ImageDraw.Draw(image)
                         draw.text((10, 10), "Brak sieci WiFi", font=font_item, fill=0)
-                        epd.displayPartialPartial(epd.getbuffer(image))
+                        epd.displayPartial(epd.getbuffer(image))
                         time.sleep(2)
                         return
                     
@@ -317,7 +317,7 @@ def main():
                             prefix = "> " if i == wifi_cursor else "  "
                             draw.text((10, y), prefix + deauth_options[i], font=font_item, fill=0)
                             y += 18
-                        epd.displayPartialPartial(epd.getbuffer(image))
+                        epd.displayPartial(epd.getbuffer(image))
                     
                     def deauth_menu_up():
                         nonlocal wifi_cursor
@@ -350,7 +350,7 @@ def main():
                                 ssid = rows[i][0] if rows[i] else "?"
                                 draw.text((10, y), prefix + ssid[:20], font=font_item, fill=0)
                                 y += 18
-                            epd.displayPartialPartial(epd.getbuffer(image))
+                            epd.displayPartial(epd.getbuffer(image))
                         
                         def wifi_up():
                             nonlocal wifi_cursor
@@ -370,7 +370,7 @@ def main():
                             image = Image.new('1', (epd.height, epd.width), 255)
                             draw = ImageDraw.Draw(image)
                             draw.text((10, 10), "Deauth: " + selected_network[:15], font=font_item, fill=0)
-                            epd.displayPartialPartial(epd.getbuffer(image))
+                            epd.displayPartial(epd.getbuffer(image))
                             
                             if bssid:
                                 deauth(bssid, "wlan0mon")
@@ -387,7 +387,7 @@ def main():
                         image = Image.new('1', (epd.height, epd.width), 255)
                         draw = ImageDraw.Draw(image)
                         draw.text((10, 10), "Deauth All...", font=font_item, fill=0)
-                        epd.displayPartialPartial(epd.getbuffer(image))
+                        epd.displayPartial(epd.getbuffer(image))
                         
                         for row in rows:
                             bssid = row[1] if len(row) > 1 else ""
@@ -403,7 +403,7 @@ def main():
                         btn_down.when_pressed = old_down
                         btn_select.when_pressed = old_select
                         image = draw_menu_image(current_index)
-                        epd.displayPartialPartial(epd.getbuffer(image))
+                        epd.displayPartial(epd.getbuffer(image))
                     
                     btn_up.when_pressed = deauth_menu_up
                     btn_down.when_pressed = deauth_menu_down
@@ -415,7 +415,7 @@ def main():
                 image = Image.new('1', (epd.height, epd.width), 255)
                 draw = ImageDraw.Draw(image)
                 draw.text((10, 10), "Probe Request Flood...", font=font_item, fill=0)
-                epd.displayPartialPartial(epd.getbuffer(image))
+                epd.displayPartial(epd.getbuffer(image))
                 logging.info("Starting Probe Request Flood...")
                 
                 probe_request_flood("wlan0mon")
@@ -423,16 +423,16 @@ def main():
                 image = Image.new('1', (epd.height, epd.width), 255)
                 draw = ImageDraw.Draw(image)
                 draw.text((10, 10), "Flood zakonczony", font=font_item, fill=0)
-                epd.displayPartialPartial(epd.getbuffer(image))
+                epd.displayPartial(epd.getbuffer(image))
                 time.sleep(2)
                 
                 image = draw_menu_image(current_index)
-                epd.displayPartialPartial(epd.getbuffer(image))
+                epd.displayPartial(epd.getbuffer(image))
             if menu_item == "Beacon Flood":
                 image = Image.new('1', (epd.height, epd.width), 255)
                 draw = ImageDraw.Draw(image)
                 draw.text((10, 10), "Beacon Flood...", font=font_item, fill=0)
-                epd.displayPartialPartial(epd.getbuffer(image))
+                epd.displayPartial(epd.getbuffer(image))
                 logging.info("Starting Beacon Flood...")
                 
                 beacon_flood("wlan0mon")
@@ -440,11 +440,11 @@ def main():
                 image = Image.new('1', (epd.height, epd.width), 255)
                 draw = ImageDraw.Draw(image)
                 draw.text((10, 10), "Flood zakonczony", font=font_item, fill=0)
-                epd.displayPartialPartial(epd.getbuffer(image))
+                epd.displayPartial(epd.getbuffer(image))
                 time.sleep(2)
                 
                 image = draw_menu_image(current_index)
-                epd.displayPartialPartial(epd.getbuffer(image))
+                epd.displayPartial(epd.getbuffer(image))
             if menu_item == "Power Off":
                 power_off()
             
