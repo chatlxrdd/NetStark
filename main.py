@@ -417,9 +417,9 @@ def main():
                 draw.text((10, 10), "Probe Request Flood...", font=font_item, fill=0)
                 epd.displayPartial(epd.getbuffer(image))
                 logging.info("Starting Probe Request Flood...")
-                
-                probe_request_flood("wlan0mon")
-                
+
+                probe_request_flood("", "wlan0mon")
+
                 image = Image.new('1', (epd.height, epd.width), 255)
                 draw = ImageDraw.Draw(image)
                 draw.text((10, 10), "Flood zakonczony", font=font_item, fill=0)
@@ -434,9 +434,9 @@ def main():
                 draw.text((10, 10), "Beacon Flood...", font=font_item, fill=0)
                 epd.displayPartial(epd.getbuffer(image))
                 logging.info("Starting Beacon Flood...")
-                
-                beacon_flood("wlan0mon")
-                
+
+                beacon_flood("", "wlan0mon")
+
                 image = Image.new('1', (epd.height, epd.width), 255)
                 draw = ImageDraw.Draw(image)
                 draw.text((10, 10), "Flood zakonczony", font=font_item, fill=0)
