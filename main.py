@@ -10,6 +10,7 @@ import glob
 import csv
 import threading
 import re
+import signal
 
 from PIL import Image, ImageDraw, ImageFont
 from gpiozero import Button
@@ -455,21 +456,23 @@ def main():
         if item == "Beacon Flood":
             draw_text_screen(["Beacon flood...", "SELECT: stop"], full=True)
             output = []
+
             proc = subprocess.Popen(
                 ['sudo', 'mdk4', 'wlan0mon', 'b', '-a'],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                bufsize=1
+                bufsize=1,
+                preexec_fn=os.setsid,   # ważne: osobna grupa procesów
             )
-            
+
             def reader():
                 for line in proc.stdout:
                     output.append(line.strip())
             threading.Thread(target=reader, daemon=True).start()
-            
+
             old_select = btn_select.when_pressed
-            
+
             def draw_beacon_output(full=False):
                 image = Image.new('1', (epd.height, epd.width), 255)
                 draw = ImageDraw.Draw(image)
@@ -479,34 +482,41 @@ def main():
                     draw.text((10, y), line[:40], font=font_small, fill=0)
                     y += 12
                 draw.text((10, epd.width - 16), "SELECT: stop", font=font_small, fill=0)
-                
+
                 if full:
                     display_full(image)
                 else:
                     display_partial(image)
-            
+
             def stop_beacon():
-                proc.terminate()
+                # ubij całą grupę (sudo + mdk4), a nie tylko wrappera
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except Exception:
+                    pass
                 try:
                     proc.wait(timeout=2)
                 except Exception:
-                    pass
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except Exception:
+                        pass
+
                 btn_select.when_pressed = old_select
                 draw_text_screen(["Done"], full=True)
                 time.sleep(1)
                 render_menu(full=True)
-            
+
             btn_select.when_pressed = stop_beacon
-            
             draw_beacon_output(full=True)
-            
+
             def refresher():
                 while proc.poll() is None:
                     draw_beacon_output(full=False)
                     time.sleep(0.25)
-            
             threading.Thread(target=refresher, daemon=True).start()
-            proc.wait()
+
+            return
 
         if item == "Power Off":
             power_off()
